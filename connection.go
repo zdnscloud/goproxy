@@ -33,44 +33,9 @@ func newConnection(connID int64, session *Session, proto, address string) *conne
 	return c
 }
 
-func (c *connection) tunnelClose(err error) {
-	c.writeErr(err)
-	c.doTunnelClose(err)
-}
-
-func (c *connection) doTunnelClose(err error) {
-	c.Lock()
-	defer c.Unlock()
-
-	if c.err != nil {
-		return
-	}
-
-	c.err = err
-	if c.err == nil {
-		c.err = io.ErrClosedPipe
-	}
-
-	close(c.buf)
-}
-
-func (c *connection) tunnelWriter() io.Writer {
-	return chanWriter{conn: c, C: c.buf}
-}
-
 func (c *connection) Close() error {
 	c.session.closeConnection(c.connID, io.EOF)
 	return nil
-}
-
-func (c *connection) copyData(b []byte) int {
-	if len(c.readBuf) == 0 {
-		return 0
-	}
-
-	n := copy(b, c.readBuf)
-	c.readBuf = c.readBuf[n:]
-	return n
 }
 
 func (c *connection) Read(b []byte) (int, error) {
@@ -95,19 +60,26 @@ func (c *connection) Read(b []byte) (int, error) {
 	return n, nil
 }
 
+func (c *connection) tunnelWriter() io.Writer {
+	return chanWriter{conn: c, C: c.buf}
+}
+
 func (c *connection) Write(b []byte) (int, error) {
-	c.Lock()
-	if c.err != nil {
-		defer c.Unlock()
-		return 0, c.err
+	if err := c.GetErr(); err != nil {
+		return 0, err
 	}
-	c.Unlock()
 
 	deadline := int64(0)
 	if !c.writeDeadline.IsZero() {
 		deadline = c.writeDeadline.Sub(time.Now()).Nanoseconds() / 1000000
 	}
 	return c.session.writeMessage(newMessage(c.connID, deadline, b))
+}
+
+func (c *connection) GetErr() error {
+	c.Lock()
+	defer c.Unlock()
+	return c.err
 }
 
 func (c *connection) writeErr(err error) {
@@ -159,17 +131,14 @@ type chanWriter struct {
 }
 
 func (c chanWriter) Write(buf []byte) (int, error) {
-	c.conn.Lock()
-	defer c.conn.Unlock()
-
-	if c.conn.err != nil {
-		return 0, c.conn.err
+	if err := c.conn.GetErr(); err != nil {
+		return 0, err
 	}
 
 	select {
 	case c.C <- buf:
 		return len(buf), nil
-	case <-time.After(15 * time.Second):
+	default:
 		return 0, errors.New("backed up reader")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -41,36 +40,24 @@ func proxyRealService(dialer Dialer, conn *connection, message *message) {
 	defer conn.Close()
 	netConn, err := net.DialTimeout(message.proto, message.address, time.Duration(message.deadline)*time.Millisecond)
 	if err != nil {
-		conn.tunnelClose(err)
+		conn.writeErr(err)
 		return
 	}
-	defer netConn.Close()
 	pipe(conn, netConn)
 }
 
 func pipe(client *connection, server net.Conn) {
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	close := func(err error) error {
-		if err == nil {
-			err = io.EOF
-		}
-		client.doTunnelClose(err)
-		server.Close()
-		return err
-	}
-
+	errCh := make(chan error, 2)
 	go func() {
-		defer wg.Done()
 		_, err := io.Copy(server, client)
-		close(err)
+		errCh <- err
 	}()
 
-	_, err := io.Copy(client, server)
-	err = close(err)
-	wg.Wait()
-
-	// Write tunnel error after no more I/O is happening, just incase messages get out of order
+	go func() {
+		_, err := io.Copy(client, server)
+		errCh <- err
+	}()
+	err := <-errCh
+	server.Close()
 	client.writeErr(err)
 }

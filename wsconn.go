@@ -1,7 +1,6 @@
 package goproxy
 
 import (
-	"io"
 	"sync"
 	"time"
 
@@ -15,13 +14,13 @@ var (
 )
 
 type wsConn struct {
+	*websocket.Conn
 	sync.Mutex
-	conn *websocket.Conn
 }
 
 func newWSConn(conn *websocket.Conn) *wsConn {
 	w := &wsConn{
-		conn: conn,
+		Conn: conn,
 	}
 	w.setupDeadline()
 	return w
@@ -30,24 +29,19 @@ func newWSConn(conn *websocket.Conn) *wsConn {
 func (w *wsConn) WriteMessage(messageType int, data []byte) error {
 	w.Lock()
 	defer w.Unlock()
-	w.conn.SetWriteDeadline(time.Now().Add(PingWaitDuration))
-	return w.conn.WriteMessage(messageType, data)
-}
-
-func (w *wsConn) NextReader() (int, io.Reader, error) {
-	return w.conn.NextReader()
+	w.Conn.SetWriteDeadline(time.Now().Add(PingWaitDuration))
+	return w.Conn.WriteMessage(messageType, data)
 }
 
 func (w *wsConn) setupDeadline() {
-	w.conn.SetReadDeadline(time.Now().Add(PingWaitDuration))
-	w.conn.SetPingHandler(func(string) error {
+	w.SetReadDeadline(time.Now().Add(PingWaitDuration))
+	w.SetPingHandler(func(string) error {
 		w.Lock()
-		w.conn.WriteControl(websocket.PongMessage, []byte(""), time.Now().Add(time.Second))
+		w.WriteControl(websocket.PongMessage, []byte(""), time.Now().Add(time.Second))
 		w.Unlock()
-		return w.conn.SetReadDeadline(time.Now().Add(PingWaitDuration))
+		return w.SetReadDeadline(time.Now().Add(PingWaitDuration))
 	})
-	w.conn.SetPongHandler(func(string) error {
-		return w.conn.SetReadDeadline(time.Now().Add(PingWaitDuration))
+	w.SetPongHandler(func(string) error {
+		return w.SetReadDeadline(time.Now().Add(PingWaitDuration))
 	})
-
 }

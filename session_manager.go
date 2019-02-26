@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"fmt"
-	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -10,50 +9,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type sessionListener interface {
-	sessionAdded(clientKey string, sessionKey int64)
-	sessionRemoved(clientKey string, sessionKey int64)
-}
-
 type sessionManager struct {
 	sync.Mutex
-	clients   map[string][]*Session
-	listeners map[sessionListener]bool
+	clients map[string]*Session
 }
 
 func newSessionManager() *sessionManager {
 	return &sessionManager{
-		clients:   map[string][]*Session{},
-		listeners: map[sessionListener]bool{},
+		clients: make(map[string]*Session),
 	}
 }
 
-func toDialer(s *Session, prefix string, deadline time.Duration) Dialer {
+func toDialer(s *Session, deadline time.Duration) Dialer {
 	return func(proto, address string) (net.Conn, error) {
-		if prefix == "" {
-			return s.serverConnect(deadline, proto, address)
-		}
-		return s.serverConnect(deadline, prefix+"::"+proto, address)
-	}
-}
-
-func (sm *sessionManager) removeListener(listener sessionListener) {
-	sm.Lock()
-	defer sm.Unlock()
-
-	delete(sm.listeners, listener)
-}
-
-func (sm *sessionManager) addListener(listener sessionListener) {
-	sm.Lock()
-	defer sm.Unlock()
-
-	sm.listeners[listener] = true
-
-	for k, sessions := range sm.clients {
-		for _, session := range sessions {
-			listener.sessionAdded(k, session.sessionKey)
-		}
+		return s.serverConnect(deadline, proto, address)
 	}
 }
 
@@ -61,51 +30,29 @@ func (sm *sessionManager) getDialer(clientKey string, deadline time.Duration) (D
 	sm.Lock()
 	defer sm.Unlock()
 
-	sessions := sm.clients[clientKey]
-	if len(sessions) > 0 {
-		return toDialer(sessions[0], "", deadline), nil
+	if session, ok := sm.clients[clientKey]; ok {
+		return toDialer(session, deadline), nil
+	} else {
+		return nil, fmt.Errorf("failed to find Session for client %s", clientKey)
 	}
-	return nil, fmt.Errorf("failed to find Session for client %s", clientKey)
 }
 
-func (sm *sessionManager) add(clientKey string, conn *websocket.Conn) *Session {
-	sessionKey := rand.Int63()
-	session := newSession(sessionKey, clientKey, conn)
-
+func (sm *sessionManager) add(clientKey string, conn *websocket.Conn) (*Session, error) {
 	sm.Lock()
 	defer sm.Unlock()
-
-	sm.clients[clientKey] = append(sm.clients[clientKey], session)
-
-	for l := range sm.listeners {
-		l.sessionAdded(clientKey, session.sessionKey)
+	if _, ok := sm.clients[clientKey]; ok {
+		return nil, fmt.Errorf("duplicate agent key %s", clientKey)
 	}
 
-	return session
+	session := newSession(clientKey, conn)
+	sm.clients[clientKey] = session
+	return session, nil
 }
 
 func (sm *sessionManager) remove(s *Session) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	store := sm.clients
-	var newSessions []*Session
-	for _, v := range store[s.clientKey] {
-		if v.sessionKey == s.sessionKey {
-			continue
-		}
-		newSessions = append(newSessions, v)
-	}
-
-	if len(newSessions) == 0 {
-		delete(store, s.clientKey)
-	} else {
-		store[s.clientKey] = newSessions
-	}
-
-	for l := range sm.listeners {
-		l.sessionRemoved(s.clientKey, s.sessionKey)
-	}
-
+	delete(sm.clients, s.clientKey)
 	s.Close()
 }

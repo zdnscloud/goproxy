@@ -19,8 +19,6 @@ const (
 	Data messageType = iota + 1
 	Connect
 	Error
-	AddClient
-	RemoveClient
 )
 
 var (
@@ -82,24 +80,6 @@ func newErrorMessage(connID int64, err error) *message {
 	}
 }
 
-func newAddClient(client string) *message {
-	return &message{
-		id:          nextid(),
-		messageType: AddClient,
-		address:     client,
-		bytes:       []byte(client),
-	}
-}
-
-func newRemoveClient(client string) *message {
-	return &message{
-		id:          nextid(),
-		messageType: RemoveClient,
-		address:     client,
-		bytes:       []byte(client),
-	}
-}
-
 func newServerMessage(reader io.Reader) (*message, error) {
 	buf := bufio.NewReader(reader)
 
@@ -145,15 +125,7 @@ func newServerMessage(reader io.Reader) (*message, error) {
 		m.proto = parts[0]
 		m.address = parts[1]
 		m.bytes = bytes
-	} else if m.messageType == AddClient || m.messageType == RemoveClient {
-		bytes, err := ioutil.ReadAll(io.LimitReader(buf, 100))
-		if err != nil {
-			return nil, err
-		}
-		m.address = string(bytes)
-		m.bytes = bytes
 	}
-
 	return m, nil
 }
 
@@ -211,10 +183,6 @@ func (m *message) String() string {
 		return fmt.Sprintf("%d ERROR        [%d]: %s", m.id, m.connID, m.Err())
 	case Connect:
 		return fmt.Sprintf("%d CONNECT      [%d]: %s/%s deadline %d", m.id, m.connID, m.proto, m.address, m.deadline)
-	case AddClient:
-		return fmt.Sprintf("%d ADDCLIENT    [%s]", m.id, m.address)
-	case RemoveClient:
-		return fmt.Sprintf("%d REMOVECLIENT [%s]", m.id, m.address)
 	}
 	return fmt.Sprintf("%d UNKNOWN[%d]: %d", m.id, m.connID, m.messageType)
 }

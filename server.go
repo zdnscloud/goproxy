@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -61,15 +60,13 @@ func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	session := s.sessions.add(clientKey, wsConn)
-	defer s.sessions.remove(session)
-
-	fmt.Printf("add client with key %v", clientKey)
-	// Don't need to associate req.Context() to the Session, it will cancel otherwise
-	_, err = session.Serve()
+	session, err := s.sessions.add(clientKey, wsConn)
 	if err != nil {
-		// Hijacked so we can't write to the client
+		s.errorWriter(rw, req, 400, err)
 	}
+
+	defer s.sessions.remove(session)
+	session.Serve()
 }
 
 func (s *Server) auth(req *http.Request) (clientKey string, authed bool, err error) {
