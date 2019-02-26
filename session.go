@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,15 +29,6 @@ type Session struct {
 	pingWait         sync.WaitGroup
 	dialer           Dialer
 	client           bool
-}
-
-// PrintTunnelData No tunnel logging by default
-var PrintTunnelData bool
-
-func init() {
-	if os.Getenv("CATTLE_TUNNEL_DATA_DEBUG") == "true" {
-		PrintTunnelData = true
-	}
 }
 
 func NewClientSession(auth ConnectAuthorizer, conn *websocket.Conn) *Session {
@@ -125,10 +115,6 @@ func (s *Session) serveMessage(reader io.Reader) error {
 		return err
 	}
 
-	if PrintTunnelData {
-		//logrus.Debug("REQUEST ", message)
-	}
-
 	if message.messageType == Connect {
 		if s.auth == nil || !s.auth(message.proto, message.address) {
 			return errors.New("connect not allowed")
@@ -192,10 +178,6 @@ func (s *Session) addRemoteClient(address string) error {
 	}
 	keys[int(sessionKey)] = true
 
-	if PrintTunnelData {
-		//logrus.Debugf("ADD REMOTE CLIENT %s, SESSION %d", address, s.sessionKey)
-	}
-
 	return nil
 }
 
@@ -211,10 +193,6 @@ func (s *Session) removeRemoteClient(address string) error {
 		delete(s.remoteClientKeys, clientKey)
 	}
 
-	if PrintTunnelData {
-		//logrus.Debugf("REMOVE REMOTE CLIENT %s, SESSION %d", address, s.sessionKey)
-	}
-
 	return nil
 }
 
@@ -222,9 +200,6 @@ func (s *Session) closeConnection(connID int64, err error) {
 	s.Lock()
 	conn := s.conns[connID]
 	delete(s.conns, connID)
-	if PrintTunnelData {
-		//logrus.Debugf("CONNECTIONS %d %d", s.sessionKey, len(s.conns))
-	}
 	s.Unlock()
 
 	if conn != nil {
@@ -237,12 +212,9 @@ func (s *Session) clientConnect(message *message) {
 
 	s.Lock()
 	s.conns[message.connID] = conn
-	if PrintTunnelData {
-		//logrus.Debugf("CONNECTIONS %d %d", s.sessionKey, len(s.conns))
-	}
 	s.Unlock()
 
-	go clientDial(s.dialer, conn, message)
+	go proxyRealService(s.dialer, conn, message)
 }
 
 func (s *Session) serverConnect(deadline time.Duration, proto, address string) (net.Conn, error) {
@@ -251,9 +223,6 @@ func (s *Session) serverConnect(deadline time.Duration, proto, address string) (
 
 	s.Lock()
 	s.conns[connID] = conn
-	if PrintTunnelData {
-		//logrus.Debugf("CONNECTIONS %d %d", s.sessionKey, len(s.conns))
-	}
 	s.Unlock()
 
 	_, err := s.writeMessage(newConnect(connID, deadline, proto, address))
@@ -266,9 +235,6 @@ func (s *Session) serverConnect(deadline time.Duration, proto, address string) (
 }
 
 func (s *Session) writeMessage(message *message) (int, error) {
-	if PrintTunnelData {
-		//logrus.Debug("WRITE ", message)
-	}
 	return message.WriteTo(s.conn)
 }
 

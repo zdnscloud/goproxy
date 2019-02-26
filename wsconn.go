@@ -8,6 +8,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var (
+	PingWaitDuration  = time.Duration(10 * time.Second)
+	PingWriteInterval = time.Duration(5 * time.Second)
+	MaxRead           = 8192
+)
+
 type wsConn struct {
 	sync.Mutex
 	conn *websocket.Conn

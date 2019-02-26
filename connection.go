@@ -1,7 +1,6 @@
 package goproxy
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net"
@@ -12,8 +11,6 @@ import (
 type connection struct {
 	sync.Mutex
 
-	ctx           context.Context
-	cancel        func()
 	err           error
 	writeDeadline time.Time
 	buf           chan []byte
@@ -67,6 +64,10 @@ func (c *connection) Close() error {
 }
 
 func (c *connection) copyData(b []byte) int {
+	if len(c.readBuf) == 0 {
+		return 0
+	}
+
 	n := copy(b, c.readBuf)
 	c.readBuf = c.readBuf[n:]
 	return n
@@ -77,24 +78,20 @@ func (c *connection) Read(b []byte) (int, error) {
 		return 0, nil
 	}
 
-	n := c.copyData(b)
-	if n > 0 {
+	if len(c.readBuf) != 0 {
+		n := copy(b, c.readBuf)
+		c.readBuf = c.readBuf[n:]
 		return n, nil
 	}
 
 	next, ok := <-c.buf
 	if !ok {
-		err := io.EOF
-		c.Lock()
-		if c.err != nil {
-			err = c.err
-		}
-		c.Unlock()
-		return 0, err
+		return 0, io.EOF
 	}
-
-	c.readBuf = next
-	n = c.copyData(b)
+	n := copy(b, next)
+	if n < len(next) {
+		c.readBuf = next[n:]
+	}
 	return n, nil
 }
 
@@ -169,20 +166,10 @@ func (c chanWriter) Write(buf []byte) (int, error) {
 		return 0, c.conn.err
 	}
 
-	newBuf := make([]byte, len(buf))
-	copy(newBuf, buf)
-	buf = newBuf
-
 	select {
-	// must copy the buffer
 	case c.C <- buf:
 		return len(buf), nil
-	default:
-		select {
-		case c.C <- buf:
-			return len(buf), nil
-		case <-time.After(15 * time.Second):
-			return 0, errors.New("backed up reader")
-		}
+	case <-time.After(15 * time.Second):
+		return 0, errors.New("backed up reader")
 	}
 }
