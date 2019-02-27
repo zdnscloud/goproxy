@@ -12,22 +12,21 @@ import (
 )
 
 type Session struct {
-	sync.Mutex
-
 	nextConnID int64
 	conn       *wsConn
+	mu         sync.Mutex
 	conns      map[int64]*connection
 	auth       ConnectAuthorizer
-	client     bool
+	isAgent    bool
 }
 
-func NewClientSession(auth ConnectAuthorizer, conn *websocket.Conn) *Session {
+func NewAgentSession(auth ConnectAuthorizer, conn *websocket.Conn) *Session {
 	return &Session{
 		nextConnID: 1,
 		conn:       newWSConn(conn),
 		conns:      map[int64]*connection{},
 		auth:       auth,
-		client:     true,
+		isAgent:    true,
 	}
 }
 
@@ -40,7 +39,7 @@ func newSession(agentKey string, conn *websocket.Conn) *Session {
 }
 
 func (s *Session) Serve() (int, error) {
-	if s.client {
+	if s.isAgent {
 		s.conn.startPing()
 	}
 
@@ -74,9 +73,9 @@ func (s *Session) serveMessage(reader io.Reader) error {
 		return nil
 	}
 
-	s.Lock()
+	s.mu.Lock()
 	conn := s.conns[message.connID]
-	s.Unlock()
+	s.mu.Unlock()
 
 	if conn == nil {
 		if message.messageType == Data {
@@ -99,19 +98,19 @@ func (s *Session) serveMessage(reader io.Reader) error {
 }
 
 func (s *Session) closeConnection(connID int64) {
-	s.Lock()
+	s.mu.Lock()
 	conn := s.conns[connID]
 	delete(s.conns, connID)
-	s.Unlock()
+	s.mu.Unlock()
 
 	conn.Close()
 }
 
 func (s *Session) clientConnect(message *message) {
 	conn := newConnection(message.connID, s, message.proto, message.address)
-	s.Lock()
+	s.mu.Lock()
 	s.conns[message.connID] = conn
-	s.Unlock()
+	s.mu.Unlock()
 	go proxyRealService(conn, message)
 }
 
@@ -125,9 +124,9 @@ func (s *Session) createConnectionForClient(deadline time.Duration, proto, addre
 	connID := atomic.AddInt64(&s.nextConnID, 1)
 	conn := newConnection(connID, s, proto, address)
 
-	s.Lock()
+	s.mu.Lock()
 	s.conns[connID] = conn
-	s.Unlock()
+	s.mu.Unlock()
 
 	_, err := s.writeMessage(newConnect(connID, deadline, proto, address))
 	if err != nil {
@@ -144,15 +143,14 @@ func (s *Session) writeMessage(message *message) (int, error) {
 }
 
 func (s *Session) Close() {
-	s.Lock()
-	defer s.Unlock()
-
-	if s.client {
+	if s.isAgent {
 		s.conn.stopPing()
 	}
 
+	s.mu.Lock()
 	for _, conn := range s.conns {
 		conn.Close()
 	}
 	s.conns = map[int64]*connection{}
+	s.mu.Unlock()
 }

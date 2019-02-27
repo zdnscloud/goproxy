@@ -2,10 +2,8 @@ package goproxy
 
 import (
 	"context"
-	//"fmt"
 	"io"
 	"net"
-	"net/http"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -13,11 +11,8 @@ import (
 
 type ConnectAuthorizer func(proto, address string) bool
 
-func ClientConnect(wsURL string, headers http.Header, dialer *websocket.Dialer, auth ConnectAuthorizer, onConnect func(context.Context) error) error {
-	if dialer == nil {
-		dialer = &websocket.Dialer{}
-	}
-	ws, _, err := dialer.Dial(wsURL, headers)
+func RegisterAgent(wsURL string, auth ConnectAuthorizer, onConnect func(context.Context) error) error {
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return err
 	}
@@ -32,7 +27,7 @@ func ClientConnect(wsURL string, headers http.Header, dialer *websocket.Dialer, 
 		}
 	}
 
-	session := NewClientSession(auth, ws)
+	session := NewAgentSession(auth, ws)
 	_, err = session.Serve()
 	session.Close()
 	return err

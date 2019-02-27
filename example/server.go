@@ -19,8 +19,9 @@ var (
 )
 
 func authorizer(req *http.Request) (string, bool, error) {
-	id := req.Header.Get("x-tunnel-id")
-	return id, id != "", nil
+	vars := mux.Vars(req)
+	agentKey := vars["id"]
+	return agentKey, agentKey != "", nil
 }
 
 func Client(server *goproxy.Server, rw http.ResponseWriter, req *http.Request) {
@@ -84,8 +85,8 @@ func main() {
 
 	handler := goproxy.New(authorizer)
 	router := mux.NewRouter()
-	router.Handle("/connect", handler)
-	router.HandleFunc("/client/{id}/{scheme}/{host}{path:.*}", func(rw http.ResponseWriter, req *http.Request) {
+	router.Handle("/register/{id}", handler)
+	router.HandleFunc("/agent/{id}/{scheme}/{host}{path:.*}", func(rw http.ResponseWriter, req *http.Request) {
 		Client(handler, rw, req)
 	})
 
