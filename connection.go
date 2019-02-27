@@ -1,27 +1,28 @@
 package goproxy
 
 import (
-	"errors"
 	"io"
 	"net"
 	"sync"
 	"time"
 )
 
-type connection struct {
-	sync.Mutex
+const (
+	WriteBufSize = 1024
+)
 
-	err           error
-	writeDeadline time.Time
-	buf           chan []byte
-	readBuf       []byte
-	addr          addr
-	session       *Session
-	connID        int64
+type connection struct {
+	wg sync.WaitGroup
+
+	buf     chan []byte
+	readBuf []byte
+	addr    addr
+	session *Session
+	connID  int64
 }
 
 func newConnection(connID int64, session *Session, proto, address string) *connection {
-	c := &connection{
+	return &connection{
 		addr: addr{
 			proto:   proto,
 			address: address,
@@ -30,11 +31,11 @@ func newConnection(connID int64, session *Session, proto, address string) *conne
 		session: session,
 		buf:     make(chan []byte, 1024),
 	}
-	return c
 }
 
 func (c *connection) Close() error {
-	c.session.closeConnection(c.connID, io.EOF)
+	close(c.buf)
+	c.wg.Wait()
 	return nil
 }
 
@@ -60,29 +61,32 @@ func (c *connection) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-func (c *connection) tunnelWriter() io.Writer {
-	return chanWriter{conn: c, C: c.buf}
-}
-
-func (c *connection) Write(b []byte) (int, error) {
-	if err := c.GetErr(); err != nil {
+//get data from session
+func (c *connection) WriteMessage(src io.Reader) (int, error) {
+	buf := make([]byte, WriteBufSize)
+	n, err := src.Read(buf)
+	if err != nil || n == 0 {
 		return 0, err
 	}
 
-	deadline := int64(0)
-	if !c.writeDeadline.IsZero() {
-		deadline = c.writeDeadline.Sub(time.Now()).Nanoseconds() / 1000000
+	select {
+	case c.buf <- buf[:n]:
+	default:
+		return 0, errConnectionBufferFull
 	}
-	return c.session.writeMessage(newMessage(c.connID, deadline, b))
+
+	if n == WriteBufSize {
+		return c.WriteMessage(src)
+	} else {
+		return n, nil
+	}
 }
 
-func (c *connection) GetErr() error {
-	c.Lock()
-	defer c.Unlock()
-	return c.err
+func (c *connection) Write(b []byte) (int, error) {
+	return c.session.writeMessage(newMessage(c.connID, 0, b))
 }
 
-func (c *connection) writeErr(err error) {
+func (c *connection) reportErr(err error) {
 	if err != nil {
 		c.session.writeMessage(newErrorMessage(c.connID, err))
 	}
@@ -97,10 +101,7 @@ func (c *connection) RemoteAddr() net.Addr {
 }
 
 func (c *connection) SetDeadline(t time.Time) error {
-	if err := c.SetReadDeadline(t); err != nil {
-		return err
-	}
-	return c.SetWriteDeadline(t)
+	return nil
 }
 
 func (c *connection) SetReadDeadline(t time.Time) error {
@@ -108,7 +109,6 @@ func (c *connection) SetReadDeadline(t time.Time) error {
 }
 
 func (c *connection) SetWriteDeadline(t time.Time) error {
-	c.writeDeadline = t
 	return nil
 }
 
@@ -123,22 +123,4 @@ func (a addr) Network() string {
 
 func (a addr) String() string {
 	return a.address
-}
-
-type chanWriter struct {
-	conn *connection
-	C    chan []byte
-}
-
-func (c chanWriter) Write(buf []byte) (int, error) {
-	if err := c.conn.GetErr(); err != nil {
-		return 0, err
-	}
-
-	select {
-	case c.C <- buf:
-		return len(buf), nil
-	default:
-		return 0, errors.New("backed up reader")
-	}
 }

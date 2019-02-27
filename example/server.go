@@ -30,13 +30,14 @@ func Client(server *goproxy.Server, rw http.ResponseWriter, req *http.Request) {
 	}
 
 	vars := mux.Vars(req)
-	clientKey := vars["id"]
+	agentKey := vars["id"]
 	url := fmt.Sprintf("%s://%s%s", vars["scheme"], vars["host"], vars["path"])
-	client := getClient(server, clientKey, timeout)
+	client := getClient(server, agentKey, timeout)
 
 	resp, err := client.Get(url)
 	if err != nil {
-		goproxy.DefaultErrorWriter(rw, req, 500, err)
+		rw.Write([]byte(err.Error()))
+		rw.WriteHeader(500)
 		return
 	}
 	defer resp.Body.Close()
@@ -45,17 +46,17 @@ func Client(server *goproxy.Server, rw http.ResponseWriter, req *http.Request) {
 	io.Copy(rw, resp.Body)
 }
 
-func getClient(server *goproxy.Server, clientKey, timeout string) *http.Client {
+func getClient(server *goproxy.Server, agentKey, timeout string) *http.Client {
 	l.Lock()
 	defer l.Unlock()
 
-	key := fmt.Sprintf("%s/%s", clientKey, timeout)
+	key := fmt.Sprintf("%s/%s", agentKey, timeout)
 	client := clients[key]
 	if client != nil {
 		return client
 	}
 
-	dialer := server.Dialer(clientKey, 15*time.Second)
+	dialer := server.GetAgentDialer(agentKey, 15*time.Second)
 	client = &http.Client{
 		Transport: &http.Transport{
 			Dial: dialer,
@@ -81,7 +82,7 @@ func main() {
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.Parse()
 
-	handler := goproxy.New(authorizer, goproxy.DefaultErrorWriter)
+	handler := goproxy.New(authorizer)
 	router := mux.NewRouter()
 	router.Handle("/connect", handler)
 	router.HandleFunc("/client/{id}/{scheme}/{host}{path:.*}", func(rw http.ResponseWriter, req *http.Request) {

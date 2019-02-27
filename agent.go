@@ -2,11 +2,13 @@ package goproxy
 
 import (
 	"context"
-	"github.com/gorilla/websocket"
+	//"fmt"
 	"io"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type ConnectAuthorizer func(proto, address string) bool
@@ -36,28 +38,31 @@ func ClientConnect(wsURL string, headers http.Header, dialer *websocket.Dialer, 
 	return err
 }
 
-func proxyRealService(dialer Dialer, conn *connection, message *message) {
-	defer conn.Close()
+func proxyRealService(conn *connection, message *message) {
 	netConn, err := net.DialTimeout(message.proto, message.address, time.Duration(message.deadline)*time.Millisecond)
 	if err != nil {
-		conn.writeErr(err)
+		conn.reportErr(err)
 		return
 	}
 	pipe(conn, netConn)
 }
 
 func pipe(client *connection, server net.Conn) {
+	client.wg.Add(2)
 	errCh := make(chan error, 2)
 	go func() {
 		_, err := io.Copy(server, client)
 		errCh <- err
+		client.wg.Done()
 	}()
 
 	go func() {
 		_, err := io.Copy(client, server)
 		errCh <- err
+		client.wg.Done()
 	}()
+
 	err := <-errCh
 	server.Close()
-	client.writeErr(err)
+	client.reportErr(err)
 }

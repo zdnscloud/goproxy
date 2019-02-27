@@ -2,7 +2,6 @@ package goproxy
 
 import (
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -11,48 +10,45 @@ import (
 
 type sessionManager struct {
 	sync.Mutex
-	clients map[string]*Session
+	agents map[string]*Session
 }
 
 func newSessionManager() *sessionManager {
 	return &sessionManager{
-		clients: make(map[string]*Session),
+		agents: make(map[string]*Session),
 	}
 }
 
-func toDialer(s *Session, deadline time.Duration) Dialer {
-	return func(proto, address string) (net.Conn, error) {
-		return s.serverConnect(deadline, proto, address)
-	}
-}
+func (m *sessionManager) getAgentDialer(agentKey string, deadline time.Duration) (Dialer, error) {
+	m.Lock()
+	defer m.Unlock()
 
-func (sm *sessionManager) getDialer(clientKey string, deadline time.Duration) (Dialer, error) {
-	sm.Lock()
-	defer sm.Unlock()
-
-	if session, ok := sm.clients[clientKey]; ok {
-		return toDialer(session, deadline), nil
-	} else {
-		return nil, fmt.Errorf("failed to find Session for client %s", clientKey)
-	}
-}
-
-func (sm *sessionManager) add(clientKey string, conn *websocket.Conn) (*Session, error) {
-	sm.Lock()
-	defer sm.Unlock()
-	if _, ok := sm.clients[clientKey]; ok {
-		return nil, fmt.Errorf("duplicate agent key %s", clientKey)
+	s, ok := m.agents[agentKey]
+	if ok == false {
+		return nil, fmt.Errorf("failed to find Session for client %s", agentKey)
 	}
 
-	session := newSession(clientKey, conn)
-	sm.clients[clientKey] = session
-	return session, nil
+	return s.getDialer(deadline), nil
 }
 
-func (sm *sessionManager) remove(s *Session) {
-	sm.Lock()
-	defer sm.Unlock()
+func (m *sessionManager) addAgent(agentKey string, conn *websocket.Conn) (*Session, error) {
+	m.Lock()
+	defer m.Unlock()
+	if _, ok := m.agents[agentKey]; ok {
+		return nil, fmt.Errorf("duplicate agent key %s", agentKey)
+	}
 
-	delete(sm.clients, s.clientKey)
-	s.Close()
+	s := newSession(agentKey, conn)
+	m.agents[agentKey] = s
+	return s, nil
+}
+
+func (m *sessionManager) removeAgent(agentKey string) {
+	m.Lock()
+	defer m.Unlock()
+
+	if s, ok := m.agents[agentKey]; ok {
+		delete(m.agents, agentKey)
+		s.Close()
+	}
 }

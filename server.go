@@ -1,74 +1,74 @@
 package goproxy
 
 import (
-	"errors"
+	"net"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-var (
-	errFailedAuth       = errors.New("failed authentication")
-	errWrongMessageType = errors.New("wrong websocket message type")
-)
-
-type Authorizer func(req *http.Request) (clientKey string, authed bool, err error)
-type ErrorWriter func(rw http.ResponseWriter, req *http.Request, code int, err error)
-
-func DefaultErrorWriter(rw http.ResponseWriter, req *http.Request, code int, err error) {
-	rw.Write([]byte(err.Error()))
-	rw.WriteHeader(code)
-}
+type Dialer func(network, address string) (net.Conn, error)
+type Authorizer func(req *http.Request) (agentKey string, authed bool, err error)
 
 type Server struct {
-	authorizer  Authorizer
-	errorWriter ErrorWriter
-	sessions    *sessionManager
-	peerLock    sync.Mutex
+	authorizer Authorizer
+	sessions   *sessionManager
 }
 
-func New(auth Authorizer, errorWriter ErrorWriter) *Server {
+func New(auth Authorizer) *Server {
 	return &Server{
-		authorizer:  auth,
-		errorWriter: errorWriter,
-		sessions:    newSessionManager(),
+		authorizer: auth,
+		sessions:   newSessionManager(),
+	}
+}
+
+func (s *Server) GetAgentDialer(agentKey string, deadline time.Duration) Dialer {
+	return func(proto, address string) (net.Conn, error) {
+		d, err := s.sessions.getAgentDialer(agentKey, deadline)
+		if err != nil {
+			return nil, err
+		}
+		return d(proto, address)
 	}
 }
 
 func (s *Server) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	clientKey, authed, err := s.auth(req)
+	s.registerAgent(rw, req)
+}
+
+func (s *Server) registerAgent(rw http.ResponseWriter, req *http.Request) {
+	agentKey, authed, err := s.authorizer(req)
 	if err != nil {
-		s.errorWriter(rw, req, 400, err)
+		s.returnError(rw, req, 400, err)
 		return
 	}
 	if !authed {
-		s.errorWriter(rw, req, 401, errFailedAuth)
+		s.returnError(rw, req, 401, errFailedAuth)
 		return
 	}
 
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout: 5 * time.Second,
 		CheckOrigin:      func(r *http.Request) bool { return true },
-		Error:            s.errorWriter,
+		Error:            s.returnError,
 	}
-
 	wsConn, err := upgrader.Upgrade(rw, req, nil)
 	if err != nil {
-		s.errorWriter(rw, req, 400, errors.New("Error during upgrade for host"))
+		s.returnError(rw, req, 400, err)
 		return
 	}
 
-	session, err := s.sessions.add(clientKey, wsConn)
+	session, err := s.sessions.addAgent(agentKey, wsConn)
 	if err != nil {
-		s.errorWriter(rw, req, 400, err)
+		s.returnError(rw, req, 400, err)
 	}
 
-	defer s.sessions.remove(session)
 	session.Serve()
+	s.sessions.removeAgent(agentKey)
 }
 
-func (s *Server) auth(req *http.Request) (clientKey string, authed bool, err error) {
-	return s.authorizer(req)
+func (s *Server) returnError(rw http.ResponseWriter, req *http.Request, code int, err error) {
+	rw.Write([]byte(err.Error()))
+	rw.WriteHeader(code)
 }
