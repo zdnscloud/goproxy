@@ -2,6 +2,7 @@ package goproxy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -35,6 +36,7 @@ func RegisterAgent(wsURL string, auth ConnectAuthorizer, onConnect func(context.
 
 func proxyRealService(conn *connection, message *message) {
 	netConn, err := net.DialTimeout(message.proto, message.address, time.Duration(message.deadline)*time.Millisecond)
+	fmt.Printf("proxy to %s:%s\n", message.proto, message.address)
 	if err != nil {
 		conn.reportErr(err)
 		return
@@ -59,5 +61,7 @@ func pipe(client *connection, server net.Conn) {
 
 	err := <-errCh
 	server.Close()
-	client.reportErr(err)
+	if err != nil {
+		client.reportErr(err)
+	}
 }

@@ -1,6 +1,7 @@
 package goproxy
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -59,6 +60,7 @@ func (s *Server) registerAgent(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	log.Printf("register agent with key %s\n", agentKey)
 	session, err := s.sessions.addAgent(agentKey, wsConn)
 	if err != nil {
 		s.returnError(rw, req, 400, err)

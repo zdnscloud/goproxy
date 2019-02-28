@@ -1,6 +1,7 @@
 package goproxy
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -8,7 +9,7 @@ import (
 )
 
 const (
-	WriteBufSize = 1024
+	WriteBufSize = 4096
 )
 
 type connection struct {
@@ -33,10 +34,16 @@ func newConnection(connID int64, session *Session, proto, address string) *conne
 	}
 }
 
+//this could be invoked by third party code
 func (c *connection) Close() error {
+	c.session.closeConnection(c.connID, io.EOF)
+	return nil
+}
+
+//connection is managed by session, this is invoked by session
+func (c *connection) doClose() {
 	close(c.buf)
 	c.wg.Wait()
-	return nil
 }
 
 func (c *connection) Read(b []byte) (int, error) {
@@ -62,23 +69,10 @@ func (c *connection) Read(b []byte) (int, error) {
 }
 
 //get data from session
-func (c *connection) WriteMessage(src io.Reader) (int, error) {
-	buf := make([]byte, WriteBufSize)
-	n, err := src.Read(buf)
-	if err != nil || n == 0 {
-		return 0, err
-	}
-
-	select {
-	case c.buf <- buf[:n]:
-	default:
-		return 0, errConnectionBufferFull
-	}
-
-	if n == WriteBufSize {
-		return c.WriteMessage(src)
-	} else {
-		return n, nil
+func (c *connection) GetMessageWriter() msgWriter {
+	return msgWriter{
+		conn: c,
+		ch:   c.buf,
 	}
 }
 
@@ -123,4 +117,20 @@ func (a addr) Network() string {
 
 func (a addr) String() string {
 	return a.address
+}
+
+type msgWriter struct {
+	conn *connection
+	ch   chan []byte
+}
+
+func (w msgWriter) Write(buf []byte) (int, error) {
+	cp := make([]byte, len(buf))
+	copy(cp, buf)
+	select {
+	case w.ch <- cp:
+		return len(buf), nil
+	case <-time.After(15 * time.Second):
+		return 0, errors.New("backed up reader")
+	}
 }

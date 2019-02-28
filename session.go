@@ -79,31 +79,35 @@ func (s *Session) serveMessage(reader io.Reader) error {
 
 	if conn == nil {
 		if message.messageType == Data {
-			newErrorMessage(message.connID, err).WriteTo(s.conn)
+			newErrorMessage(message.connID, errUnknownConnection).WriteTo(s.conn)
 		}
 		return nil
 	}
 
 	switch message.messageType {
 	case Data:
-		if _, err := conn.WriteMessage(message); err != nil {
-			conn.reportErr(err)
-			s.closeConnection(message.connID)
+		if _, err := io.Copy(conn.GetMessageWriter(), message); err != nil {
+			s.closeConnection(message.connID, err)
 		}
 	case Error:
-		s.closeConnection(message.connID)
+		s.closeConnection(message.connID, message.err)
 	}
 
 	return nil
 }
 
-func (s *Session) closeConnection(connID int64) {
+func (s *Session) closeConnection(connID int64, err error) {
 	s.mu.Lock()
 	conn := s.conns[connID]
 	delete(s.conns, connID)
 	s.mu.Unlock()
 
-	conn.Close()
+	if conn != nil {
+		if err != nil {
+			conn.reportErr(err)
+		}
+		conn.doClose()
+	}
 }
 
 func (s *Session) clientConnect(message *message) {
@@ -130,8 +134,7 @@ func (s *Session) createConnectionForClient(deadline time.Duration, proto, addre
 
 	_, err := s.writeMessage(newConnect(connID, deadline, proto, address))
 	if err != nil {
-		conn.reportErr(err)
-		s.closeConnection(connID)
+		s.closeConnection(connID, err)
 		return nil, err
 	}
 
