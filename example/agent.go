@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/zdnscloud/cement/log"
 	"github.com/zdnscloud/goproxy"
 )
 
@@ -19,5 +20,10 @@ func main() {
 	flag.StringVar(&id, "id", "foo", "Client ID")
 	flag.Parse()
 
-	goproxy.RegisterAgent(fmt.Sprintf("%s/%s", addr, id), func(string, string) bool { return true }, nil)
+	log.InitLogger(log.Debug)
+
+	err := goproxy.RegisterAgent(fmt.Sprintf("%s/%s", addr, id), func(string, string) bool { return true }, nil)
+	if err != nil {
+		log.Errorf("agent get err:%s", err.Error())
+	}
 }

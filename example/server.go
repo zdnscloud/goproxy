@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/zdnscloud/cement/log"
 	"github.com/zdnscloud/goproxy"
 )
 
@@ -82,6 +83,8 @@ func main() {
 	flag.StringVar(&addr, "listen", ":8123", "Listen address")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.Parse()
+
+	log.InitLogger(log.Debug)
 
 	handler := goproxy.New(authorizer)
 	router := mux.NewRouter()
