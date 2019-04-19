@@ -36,7 +36,7 @@ func RegisterAgent(wsURL string, auth ConnectAuthorizer, onConnect func(context.
 
 func proxyRealService(conn *connection, message *message) {
 	netConn, err := net.DialTimeout(message.proto, message.address, time.Duration(message.deadline)*time.Millisecond)
-	log.Debugf("proxy to %s:%s\n", message.proto, message.address)
+	log.Debugf("proxy request to %s:%s", message.proto, message.address)
 	if err != nil {
 		conn.reportErr(err)
 		return
