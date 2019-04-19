@@ -29,7 +29,7 @@ func RegisterAgent(wsURL string, auth ConnectAuthorizer, onConnect func(context.
 	}
 
 	session := NewAgentSession(auth, ws)
-	_, err := session.Serve()
+	_, err = session.Serve()
 	session.Close()
 	return err
 }
