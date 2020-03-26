@@ -2,6 +2,7 @@ package goproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"time"
@@ -13,7 +14,13 @@ import (
 type ConnectAuthorizer func(proto, address string) bool
 
 func RegisterAgent(wsURL string, auth ConnectAuthorizer, onConnect func(context.Context) error) error {
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	dialer := websocket.Dialer{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+		HandshakeTimeout: 45 * time.Second,
+	}
+	ws, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		return err
 	}
